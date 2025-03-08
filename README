@@ -1,0 +1,98 @@
+Below is the **README (v1.0)** in a plain text format so you can copy it separately:
+
+---
+
+# README (v1.0)
+
+## Overview
+
+This Python script collects user inputs (coin ticker, position type, entry price, exit price, leverage, capital) step-by-step, calculates a potential profit, and allows you to backtrack to a previous input if you make a mistake. 
+
+## Key Features
+
+1. **Step-by-Step Input**  
+   Each step asks for a specific piece of data (coin, position type, entry, exit, leverage, capital).
+
+2. **Backtracking**  
+   You can type `back` at almost any prompt (except the very first step) to correct a previous input rather than restarting the entire process.
+
+3. **Exit Anytime**  
+   Type `exit` at any prompt to quit the script immediately.
+
+4. **Final Calculation**  
+   Once all inputs (steps 0 through 5) are collected, the script calculates your potential profit using:
+   - **LONG**: \(\frac{\text{(exit - entry)}}{\text{entry}}\)
+   - **SHORT**: \(\frac{\text{(entry - exit)}}{\text{entry}}\)
+   - **Notional**: \(\text{capital} \times \text{leverage}\)
+
+## Requirements
+
+- Python 3.x installed on your system.
+- No additional libraries are required.
+
+## How to Use
+
+1. **Save the Script**  
+   Copy the Python code into a file named `main.py` (or any file name you like).
+
+2. **Run the Script**  
+   ```bash
+   python3 main.py
+   ```
+   or
+   ```bash
+   python main.py
+   ```
+
+3. **Follow the Prompts**  
+   - **Coin Ticker**: e.g., `BTC`, `SOL`
+   - **Position Type**: `LONG` or `SHORT`
+   - **Entry Price**: a float (e.g., `150.0`)
+   - **Exit Price**: a float (e.g., `158.5`)
+   - **Leverage**: a float (e.g., `10`)
+   - **Capital**: a float (e.g., `100`)
+
+4. **Go Back if Needed**  
+   - Type `back` to return to the previous step and change a value.
+
+5. **Exit at Any Time**  
+   - Type `exit` to end the script immediately.
+
+6. **See the Calculation**  
+   - After the final step, the script prints out the potential profit calculation based on your inputs. It then prompts you to `reset`, `back`, or `exit`.
+
+## Formula Details
+
+- **Notional Value**:  
+  \[
+    \text{Notional} = \text{Capital} \times \text{Leverage}
+  \]
+
+- **Profit Fraction**:
+  - **LONG**:  
+    \[
+      \frac{\text{Exit} - \text{Entry}}{\text{Entry}}
+    \]
+  - **SHORT**:  
+    \[
+      \frac{\text{Entry} - \text{Exit}}{\text{Entry}}
+    \]
+
+- **Potential Profit**:  
+  \[
+    \text{Potential Profit} = \text{Notional} \times \text{Profit Fraction}
+  \]
+
+## Error Handling
+
+- If you enter an invalid float (e.g., `abc`, `x16`), you’ll see an error message and be prompted again for that same input.
+- If you enter an invalid position type (anything other than `LONG` or `SHORT`), you’ll see a warning and can try again.
+
+## Disclaimer
+
+- **Educational Use Only**: This script is for learning and demonstration purposes. It does not connect to any exchange or execute trades.
+- **No Warranty**: Use at your own risk. The author is not responsible for any financial losses that may occur from using this script.  
+
+--- 
+
+**End of README (v1.0)**
