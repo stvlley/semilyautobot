@@ -1,190 +1,166 @@
-# modules/paper_trader.py
-
+#!/usr/bin/env python3
 import os
 import csv
 import time
 import datetime
-import random
-import ccxt
+import signal
+import pandas as pd
+import numpy as np
+import ta
 from dotenv import load_dotenv
+from pybit.unified_trading import HTTP
 
-# Load API keys from .env
+# ✅ Load API keys from .env
 load_dotenv()
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 
-# Initialize Bybit testnet API connection
-exchange = ccxt.bybit({
-    "apiKey": BYBIT_API_KEY,
-    "secret": BYBIT_API_SECRET,
-    "enableRateLimit": True,
-    "options": {
-        "defaultType": "swap",  # Ensure we're using the correct market type (USDT perpetual)
-    }
-})
-exchange.set_sandbox_mode(True)  # Activate Testnet Mode
+# ✅ Initialize Bybit Testnet API connection
+session = HTTP(
+    demo=True,  
+    api_key=BYBIT_API_KEY,
+    api_secret=BYBIT_API_SECRET,
+    recv_window=10000
+)
 
-def run_paper_trader(symbol: str, interval_sec: int = 300, total_duration_sec=3600, capital: float = 1000.0):
-    """
-    Runs a testnet trading bot that executes real trades on Bybit's demo environment.
-    - Places market BUY and SELL orders based on a simple strategy.
-    - Uses leverage dynamically.
-    - Logs trades into a CSV file.
-    """
+# ✅ Define the CSV file path for logging trades
+csv_file_path = os.path.join(os.getcwd(), "paper_trades.csv")
 
-    start_time = time.time()
-    trades_csv = "paper_trades.csv"
+total_profit = 0  # Track total earnings over time
+open_trade = None  # Track open trade
+trade_history = []  # Store trade history for learning
+running = True  # Control for stopping bot
 
-    position_open = False
-    entry_price = 0.0
-    position_side = None
-    leverage = 1.0
+def signal_handler(sig, frame):
+    global running, open_trade
+    confirm = input("\n⚠️ Are you sure you want to stop the bot? (yes/no): ")
+    if confirm.lower() == "yes":
+        print("\n🔴 Stopping bot...")
+        if open_trade:
+            print("📉 Closing open trade before exit...")
+            close_trade()
+        print(f"💰 Total Profit so far: ${total_profit:.2f}")
+        running = False
+    else:
+        print("✅ Bot continues running...")
 
-    print(f"\n🚀 ** TESTNET PAPER TRADER for {symbol} **")
-    print(f"Interval={interval_sec}s | Duration={total_duration_sec}s | Capital={capital}")
-    print(f"Bybit Testnet API Key: {BYBIT_API_KEY[:5]}... (hidden)")
-    print("(Press Ctrl+C to stop early)\n")
+signal.signal(signal.SIGINT, signal_handler)
 
-    while True:
-        if time.time() - start_time > total_duration_sec:
-            print("🔴 Reached total_duration_sec. Stopping paper trader.")
-            break
 
-        # Fetch latest price from Bybit testnet
-        price = fetch_latest_price(symbol)
-        if price is None:
-            print(f"⚠ Failed to fetch price for {symbol}. Retrying in 60s.")
-            time.sleep(60)
-            continue
-
-        # Evaluate entry signals
-        risk_score = evaluate_signals(price, symbol)
-        chosen_leverage = choose_leverage(risk_score)
-
-        if not position_open:
-            if risk_score > 0.7:
-                # OPEN LONG position
-                position_open = True
-                position_side = "LONG"
-                entry_price = price
-                leverage = chosen_leverage
-
-                # Calculate quantity based on capital
-                quantity = (capital * leverage) / price
-
-                # Send order to Bybit testnet
-                try:
-                    order = exchange.create_order(
-                        symbol=symbol,
-                        type="market",
-                        side="buy",
-                        amount=quantity
-                    )
-                    print(f"✅ [TESTNET] Market BUY Order Placed | Qty={quantity:.6f} | {symbol}")
-                except Exception as e:
-                    print(f"❌ Error placing test BUY order: {e}")
-
-                # Log the trade
-                trade_data = {
-                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "symbol": symbol,
-                    "side": position_side,
-                    "action": "OPEN",
-                    "price": price,
-                    "leverage": leverage,
-                    "pnl": 0.0
-                }
-                log_trade_csv(trades_csv, trade_data)
-                print(f"📈 OPEN LONG at {price:.2f} | Leverage: x{leverage}")
-
-        else:
-            # If position is open, check exit condition
-            if risk_score < 0.4:
-                position_open = False
-                exit_price = price
-                pnl = compute_pnl(position_side, entry_price, exit_price, leverage, capital)
-
-                # Place SELL order to close position
-                quantity = (capital * leverage) / entry_price
-                try:
-                    order = exchange.create_order(
-                        symbol=symbol,
-                        type="market",
-                        side="sell",
-                        amount=quantity
-                    )
-                    print(f"✅ [TESTNET] Market SELL Order Placed | Qty={quantity:.6f} | {symbol}")
-                except Exception as e:
-                    print(f"❌ Error placing test SELL order: {e}")
-
-                # Log the trade
-                trade_data = {
-                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "symbol": symbol,
-                    "side": position_side,
-                    "action": "CLOSE",
-                    "price": price,
-                    "leverage": leverage,
-                    "pnl": pnl
-                }
-                log_trade_csv(trades_csv, trade_data)
-                print(f"📉 CLOSE {position_side} at {price:.2f} | PnL={pnl:.2f}")
-
-                # Reset state
-                position_side = None
-                entry_price = 0.0
-                leverage = 1.0
-
-        # Sleep before next trade check
-        time.sleep(interval_sec)
-
-def fetch_latest_price(symbol: str) -> float:
-    """
-    Fetches the latest market price for a given symbol from Bybit Testnet.
-    """
+def fetch_latest_price(symbol):
+    """✅ Fetch latest market price."""
     try:
-        ticker = exchange.fetch_ticker(symbol)
-        return ticker['last']
+        response = session.get_tickers(category="linear", symbol=symbol)
+        return float(response["result"]["list"][0]["lastPrice"])
     except Exception as e:
-        print(f"⚠ Error fetching Bybit price for {symbol}: {e}")
+        print(f"⚠ Error fetching price for {symbol}: {e}")
         return None
 
-def evaluate_signals(price: float, symbol: str) -> float:
-    """
-    Uses a simple placeholder strategy to return a risk score (0.0 - 1.0).
-    0.0 = Strong SELL, 1.0 = Strong BUY.
-    """
-    return random.random()
 
-def choose_leverage(risk_score: float) -> float:
-    """
-    Determines leverage dynamically based on risk confidence.
-    - risk_score = 0 => leverage = 1
-    - risk_score = 1 => leverage = 20
-    """
-    return 1 + (19 * risk_score)
+def get_minimum_order_size(symbol: str):
+    """✅ Fetch the minimum order size and step size from Bybit for a given symbol."""
+    try:
+        response = session.get_instruments_info(category="linear", symbol=symbol)
+        instrument = response["result"]["list"][0]
+        min_qty = float(instrument["lotSizeFilter"]["minOrderQty"])
+        qty_step = float(instrument["lotSizeFilter"]["qtyStep"])
+        return min_qty, qty_step
+    except Exception as e:
+        print(f"⚠ Error fetching minimum order size for {symbol}: {e}")
+        return 0.001, 0.001  # Safe default values
 
-def compute_pnl(side: str, entry: float, exit_: float, lev: float, capital: float) -> float:
-    """
-    Calculates a simple profit/loss for the position.
-    """
-    notional = capital * lev
-    if side == "LONG":
-        fraction = (exit_ - entry) / entry
-    else:
-        fraction = (entry - exit_) / entry
-    return notional * fraction
 
-def log_trade_csv(filename: str, trade_data: dict):
-    """Appends trade data to a CSV file."""
-    file_exists = os.path.isfile(filename)
-    with open(filename, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=trade_data.keys())
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(trade_data)
-
-# Quick test
-if __name__ == "__main__":
-    run_paper_trader("BTC/USDT", interval_sec=60, total_duration_sec=600, capital=500)
+def suggest_leverage_and_capital():
+    """✅ Suggest leverage and capital based on past trades and allow user confirmation."""
+    global trade_history
+    leverage = 5  # Default leverage
+    capital = 500  # Default capital allocation
     
+    if trade_history:
+        last_trade = trade_history[-1]
+        if last_trade['pnl'] > 0:
+            leverage = min(last_trade['leverage'] + 1, 10)  # Increase leverage if profitable
+            capital += 50  # Increase capital slightly if profitable
+        else:
+            leverage = max(last_trade['leverage'] - 1, 3)  # Reduce leverage on losses
+            capital = max(100, capital - 50)  # Reduce capital to manage risk
+    
+    print(f"🔍 Suggested Leverage: {leverage}x, Suggested Capital: ${capital}")
+    
+    modify = input("🔸 Do you want to modify these values? (yes/no): ")
+    if modify.lower() == "yes":
+        leverage = int(input("🔸 Enter new leverage (max 20x): "))
+        leverage = min(max(leverage, 1), 20)  # Ensure leverage is between 1x and 20x
+        capital = float(input("🔸 Enter new capital (max $5000): "))
+        capital = min(max(capital, 100), 5000)  # Ensure capital is between $100 and $5000
+    
+    print(f"✅ Final Decision: {leverage}x leverage, ${capital} capital.")
+    return leverage, capital
+
+
+def place_trade(symbol, side, leverage, capital):
+    """✅ Places a market order on Bybit Testnet with validated leverage and capital."""
+    global open_trade
+    price = fetch_latest_price(symbol)
+    if not price:
+        print("❌ Cannot fetch latest price. Skipping trade.")
+        return None
+    
+    min_qty, qty_step = get_minimum_order_size(symbol)
+    quantity = round((capital * leverage) / price, 3)
+    
+    # Adjust quantity to fit Bybit's step size rules
+    if quantity < min_qty:
+        quantity = min_qty
+    elif quantity % qty_step != 0:
+        quantity = round(quantity - (quantity % qty_step), 3)
+    
+    print(f"📈 Placing {side} trade on {symbol} at ${price:.2f} with qty={quantity}, leverage={leverage}x")
+    
+    try:
+        session.place_order(category="linear", symbol=symbol, side=side, orderType="Market", qty=quantity)
+        open_trade = {"symbol": symbol, "side": side, "entry_price": price, "leverage": leverage, "quantity": quantity}
+        return open_trade
+    except Exception as e:
+        print(f"❌ Trade failed: {e}")
+        return None
+
+
+def close_trade():
+    """✅ Closes the open trade before stopping the bot."""
+    global open_trade, trade_history, total_profit
+    if not open_trade:
+        return
+    
+    exit_price = fetch_latest_price(open_trade["symbol"])
+    if not exit_price:
+        print("❌ Cannot fetch exit price. Holding position.")
+        return
+    
+    pnl = (exit_price - open_trade["entry_price"]) * open_trade["quantity"] * open_trade["leverage"]
+    total_profit += pnl
+    trade_history.append({"symbol": open_trade["symbol"], "pnl": pnl, "leverage": open_trade["leverage"]})
+    
+    session.place_order(category="linear", symbol=open_trade["symbol"], side="Sell" if open_trade["side"] == "Buy" else "Buy", orderType="Market", qty=open_trade["quantity"])
+    print(f"💰 Closing trade at ${exit_price:.2f} | PnL: ${pnl:.2f}")
+    open_trade = None
+
+
+def run_paper_trader(symbol):
+    """✅ Runs the scalping bot."""
+    global running
+    leverage, capital = suggest_leverage_and_capital()
+    print(f"✅ Final Decision: Trading {symbol} with {leverage}x leverage and ${capital} capital.")
+    
+    while running:
+        open_trade = place_trade(symbol, "Buy", leverage, capital)  # Placeholder logic
+        if open_trade:
+            print("⏳ Holding trade... Checking for exit conditions...")
+            time.sleep(60)
+            close_trade()
+        time.sleep(60)
+
+
+# ✅ Ask user for the token
+symbol = input("\n🔸 Enter the symbol to trade (e.g., ETHUSDT, SOLUSDT): ").upper()
+run_paper_trader(symbol)
